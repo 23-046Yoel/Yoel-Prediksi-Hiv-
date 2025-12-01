@@ -351,6 +351,84 @@ def main():
             ax.legend()
             st.pyplot(fig)
 
+    # ===== Tren Pertumbuhan per Negara =====
+    st.subheader("🌍 Tren Pertumbuhan Kasus HIV per Negara")
+
+    # Agregasi per negara & tahun
+    country_year_trend = (
+        df_features.groupby(["Country", "Year"])["Count_median"]
+        .sum()
+        .reset_index()
+        .sort_values("Year")
+    )
+
+    # Pilih WHO Region (opsional) untuk membatasi daftar negara
+    col_country1, col_country2 = st.columns(2)
+
+    with col_country1:
+        available_regions = sorted(df_features["WHO Region"].unique())
+        selected_region_filter = st.selectbox(
+            "Filter Negara berdasarkan WHO Region (opsional):",
+            options=["Semua Region"] + available_regions,
+            index=0,
+        )
+
+    # Filter negara sesuai region bila dipilih
+    if selected_region_filter != "Semua Region":
+        available_countries = sorted(
+            df_features.loc[
+                df_features["WHO Region"] == selected_region_filter, "Country"
+            ].unique()
+        )
+    else:
+        available_countries = sorted(df_features["Country"].unique())
+
+    with col_country2:
+        default_countries = available_countries[:5]
+        selected_countries = st.multiselect(
+            "Pilih 1–5 negara untuk dianalisis:",
+            options=available_countries,
+            default=default_countries,
+        )
+
+    filtered_country_year = country_year_trend[
+        country_year_trend["Country"].isin(selected_countries)
+    ]
+
+    if selected_countries:
+        if PLOTLY_AVAILABLE:
+            fig_country_trend = px.line(
+                filtered_country_year,
+                x="Year",
+                y="Count_median",
+                color="Country",
+                markers=True,
+                labels={
+                    "Year": "Tahun",
+                    "Count_median": "Total Kasus HIV (Count_median)",
+                    "Country": "Negara",
+                },
+                title="Tren Pertumbuhan Kasus HIV per Negara Terpilih",
+            )
+            st.plotly_chart(fig_country_trend, use_container_width=True)
+        else:
+            fig, ax = plt.subplots()
+            for country, sub_df in filtered_country_year.groupby("Country"):
+                ax.plot(
+                    sub_df["Year"],
+                    sub_df["Count_median"],
+                    marker="o",
+                    label=country,
+                )
+            ax.set_xlabel("Tahun")
+            ax.set_ylabel("Total Kasus HIV (Count_median)")
+            ax.set_title("Tren Pertumbuhan Kasus HIV per Negara Terpilih")
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format_large(x)))
+            ax.legend()
+            st.pyplot(fig)
+    else:
+        st.info("Pilih minimal satu negara untuk melihat tren pertumbuhan.")
+
     # ===== Seksi 4: Geospatial / Choropleth =====
     st.subheader("🗺️ Peta Choropleth Distribusi Kasus HIV per Negara")
 
