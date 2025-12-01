@@ -257,7 +257,101 @@ def main():
         ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format_large(x)))
         st.pyplot(fig)
 
-    # ===== Seksi 3: Geospatial / Choropleth =====
+    # ===== Seksi 3: Tren Pertumbuhan & Penyebaran per Tahun =====
+    st.subheader("📅 Tren Pertumbuhan & Penyebaran HIV per Tahun")
+
+    # Agregasi total kasus per tahun (semua negara)
+    year_trend = (
+        df_features.groupby("Year")["Count_median"]
+        .sum()
+        .reset_index()
+        .sort_values("Year")
+    )
+
+    # Agregasi per region & tahun
+    region_year_trend = (
+        df_features.groupby(["WHO Region", "Year"])["Count_median"]
+        .sum()
+        .reset_index()
+        .sort_values("Year")
+    )
+
+    col_trend1, col_trend2 = st.columns(2)
+
+    with col_trend1:
+        st.markdown("**Total Kasus HIV Global per Tahun**")
+        if PLOTLY_AVAILABLE:
+            fig_year = px.line(
+                year_trend,
+                x="Year",
+                y="Count_median",
+                markers=True,
+                labels={
+                    "Year": "Tahun",
+                    "Count_median": "Total Kasus HIV (Count_median)",
+                },
+                title="Tren Pertumbuhan Kasus HIV Global",
+            )
+            fig_year.update_traces(line=dict(color="#e74c3c", width=3))
+            st.plotly_chart(fig_year, use_container_width=True)
+        else:
+            fig, ax = plt.subplots()
+            ax.plot(
+                year_trend["Year"],
+                year_trend["Count_median"],
+                marker="o",
+                color="#e74c3c",
+            )
+            ax.set_xlabel("Tahun")
+            ax.set_ylabel("Total Kasus HIV (Count_median)")
+            ax.set_title("Tren Pertumbuhan Kasus HIV Global")
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format_large(x)))
+            st.pyplot(fig)
+
+    with col_trend2:
+        st.markdown("**Tren Kasus HIV per WHO Region**")
+        selected_regions = st.multiselect(
+            "Pilih WHO Region untuk ditampilkan:",
+            options=sorted(region_year_trend["WHO Region"].unique()),
+            default=sorted(region_year_trend["WHO Region"].unique()),
+        )
+
+        filtered_region_year = region_year_trend[
+            region_year_trend["WHO Region"].isin(selected_regions)
+        ]
+
+        if PLOTLY_AVAILABLE:
+            fig_region_trend = px.line(
+                filtered_region_year,
+                x="Year",
+                y="Count_median",
+                color="WHO Region",
+                markers=True,
+                labels={
+                    "Year": "Tahun",
+                    "Count_median": "Total Kasus HIV (Count_median)",
+                    "WHO Region": "Region WHO",
+                },
+                title="Tren Penyebaran Kasus HIV per WHO Region",
+            )
+            st.plotly_chart(fig_region_trend, use_container_width=True)
+        else:
+            fig, ax = plt.subplots()
+            for region, sub_df in filtered_region_year.groupby("WHO Region"):
+                ax.plot(
+                    sub_df["Year"],
+                    sub_df["Count_median"],
+                    marker="o",
+                    label=region,
+                )
+            ax.set_xlabel("Tahun")
+            ax.set_ylabel("Total Kasus HIV (Count_median)")
+            ax.set_title("Tren Penyebaran Kasus HIV per WHO Region")
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format_large(x)))
+            ax.legend()
+            st.pyplot(fig)
+
+    # ===== Seksi 4: Geospatial / Choropleth =====
     st.subheader("🗺️ Peta Choropleth Distribusi Kasus HIV per Negara")
 
     # Siapkan data peta
@@ -434,7 +528,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
 
 
