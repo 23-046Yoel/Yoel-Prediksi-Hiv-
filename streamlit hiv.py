@@ -179,7 +179,11 @@ def main():
                 "Max": [y_train.max(), y_test.max()],
             }
         )
-        st.dataframe(stats_df.style.format("{:,.0f}"))
+        # Format hanya kolom numerik supaya tidak error saat kolom string diformat
+        numeric_cols = ["Mean", "Median", "Std Dev", "Min", "Max"]
+        st.dataframe(
+            stats_df.style.format("{:,.0f}", subset=pd.IndexSlice[:, numeric_cols])
+        )
 
     # ===== Seksi 2: Distribusi Target =====
     st.subheader("📈 Distribusi Target: Train vs Test")
@@ -430,5 +434,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
