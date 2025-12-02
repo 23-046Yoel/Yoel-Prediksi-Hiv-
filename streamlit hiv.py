@@ -603,10 +603,100 @@ def main():
     st.markdown(
         "**Laporan Analitik dan Sistem Pendukung Keputusan untuk Rekomendasi Kebijakan Pencegahan HIV/AIDS**"
     )
+    st.markdown("---")
 
-    # Analisis data untuk laporan
-    # 1. Ringkasan Eksekutif
-    st.subheader("📊 1. Ringkasan Eksekutif")
+    # Summary Dashboard Interaktif
+    st.subheader("📊 Dashboard Ringkasan Eksekutif")
+    
+    # Hitung metrik kunci
+    total_cases_global = df_features["Count_median"].sum()
+    avg_cases_per_year = df_features.groupby("Year")["Count_median"].sum().mean()
+    years_span = df_features["Year"].max() - df_features["Year"].min() + 1
+    total_countries = df_features["Country"].nunique()
+    total_regions = df_features["WHO Region"].nunique()
+    
+    # Analisis pertumbuhan
+    year_trend_analysis = (
+        df_features.groupby("Year")["Count_median"]
+        .sum()
+        .reset_index()
+        .sort_values("Year")
+    )
+    if len(year_trend_analysis) > 1:
+        first_year_cases = year_trend_analysis.iloc[0]["Count_median"]
+        last_year_cases = year_trend_analysis.iloc[-1]["Count_median"]
+        growth_rate = ((last_year_cases - first_year_cases) / first_year_cases) * 100 if first_year_cases > 0 else 0
+    else:
+        growth_rate = 0
+        first_year_cases = last_year_cases = 0
+    
+    # Visualisasi ringkasan dengan metrics
+    col_dash1, col_dash2, col_dash3, col_dash4 = st.columns(4)
+    with col_dash1:
+        st.metric("🌍 Total Kasus Global", format_large(total_cases_global), 
+                 delta=f"{format_large(last_year_cases - first_year_cases)} dari baseline" if first_year_cases > 0 else None)
+    with col_dash2:
+        st.metric("📈 Rata-rata/Tahun", format_large(avg_cases_per_year))
+    with col_dash3:
+        st.metric("📊 Tingkat Pertumbuhan", f"{growth_rate:+.1f}%",
+                 delta="Meningkat" if growth_rate > 0 else "Menurun" if growth_rate < 0 else "Stabil")
+    with col_dash4:
+        st.metric("🗺️ Cakupan", f"{total_countries} negara, {total_regions} region")
+    
+    # Visualisasi ringkasan eksekutif
+    col_viz1, col_viz2 = st.columns(2)
+    
+    with col_viz1:
+        st.markdown("**📊 Distribusi Kasus per Tahun**")
+        if PLOTLY_AVAILABLE:
+            fig_exec = px.bar(
+                year_trend_analysis,
+                x="Year",
+                y="Count_median",
+                labels={"Year": "Tahun", "Count_median": "Total Kasus"},
+                title="Total Kasus HIV per Tahun",
+                color="Count_median",
+                color_continuous_scale="Reds"
+            )
+            st.plotly_chart(fig_exec, use_container_width=True)
+        else:
+            fig, ax = plt.subplots()
+            ax.bar(year_trend_analysis["Year"], year_trend_analysis["Count_median"], color="#e74c3c")
+            ax.set_xlabel("Tahun")
+            ax.set_ylabel("Total Kasus")
+            ax.set_title("Total Kasus HIV per Tahun")
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: format_large(x)))
+            st.pyplot(fig)
+    
+    with col_viz2:
+        st.markdown("**📈 Tren Pertumbuhan Global**")
+        if PLOTLY_AVAILABLE:
+            year_trend_analysis["Growth_Pct"] = year_trend_analysis["Count_median"].pct_change() * 100
+            fig_growth = px.line(
+                year_trend_analysis,
+                x="Year",
+                y="Growth_Pct",
+                markers=True,
+                labels={"Year": "Tahun", "Growth_Pct": "Pertumbuhan (%)"},
+                title="Tingkat Pertumbuhan Tahunan (%)"
+            )
+            fig_growth.add_hline(y=0, line_dash="dash", line_color="gray", annotation_text="Baseline")
+            st.plotly_chart(fig_growth, use_container_width=True)
+        else:
+            year_trend_analysis["Growth_Pct"] = year_trend_analysis["Count_median"].pct_change() * 100
+            fig, ax = plt.subplots()
+            ax.plot(year_trend_analysis["Year"], year_trend_analysis["Growth_Pct"], marker="o", color="#3498db")
+            ax.axhline(y=0, color="gray", linestyle="--", label="Baseline")
+            ax.set_xlabel("Tahun")
+            ax.set_ylabel("Pertumbuhan (%)")
+            ax.set_title("Tingkat Pertumbuhan Tahunan (%)")
+            ax.legend()
+            st.pyplot(fig)
+    
+    st.markdown("---")
+    
+    # 1. Ringkasan Eksekutif (Detail)
+    st.subheader("📊 1. Ringkasan Eksekutif (Detail)")
     
     # Hitung metrik kunci
     total_cases_global = df_features["Count_median"].sum()
@@ -694,8 +784,14 @@ def main():
                     "Growth_Rate": growth_pct,
                     "First_Year": country_data.index[0],
                     "Last_Year": country_data.index[-1],
-                    "Current_Cases": last_val
+                    "Current_Cases": last_val,
+                    "First_Cases": first_val
                 })
+    
+    # Inisialisasi variabel untuk menghindari error
+    high_risk = pd.DataFrame()
+    moderate_risk = pd.DataFrame()
+    declining = pd.DataFrame()
     
     if country_growth:
         df_growth = pd.DataFrame(country_growth)
@@ -740,9 +836,180 @@ def main():
                 st.dataframe(declining_display, use_container_width=True, hide_index=True)
             else:
                 st.info("Tidak ada negara dengan tren menurun")
+    
+    # Matriks Prioritas (Impact vs Growth Rate)
+    st.markdown("**📊 Matriks Prioritas Intervensi**")
+    if country_growth:
+        df_priority = pd.DataFrame(country_growth)
+        # Gabungkan dengan total kasus untuk impact
+        country_totals = df_features.groupby("Country")["Count_median"].sum().to_dict()
+        df_priority["Total_Cases"] = df_priority["Country"].map(country_totals)
+        df_priority["Impact_Score"] = (df_priority["Total_Cases"] / df_priority["Total_Cases"].max() * 100).round(1)
+        df_priority["Priority_Score"] = (df_priority["Impact_Score"] * 0.6 + abs(df_priority["Growth_Rate"]) * 0.4).round(1)
+        df_priority = df_priority.sort_values("Priority_Score", ascending=False)
+        
+        top_priority = df_priority.head(10)[["Country", "Impact_Score", "Growth_Rate", "Priority_Score", "Current_Cases"]].copy()
+        top_priority.columns = ["Negara", "Impact Score", "Growth Rate (%)", "Priority Score", "Kasus Terkini"]
+        top_priority["Growth Rate (%)"] = top_priority["Growth Rate (%)"].round(1)
+        top_priority["Kasus Terkini"] = top_priority["Kasus Terkini"].apply(format_large)
+        
+        st.dataframe(top_priority, use_container_width=True, hide_index=True)
+        st.caption("**Catatan:** Priority Score = (Impact Score × 0.6) + (|Growth Rate| × 0.4). Semakin tinggi skor, semakin tinggi prioritas intervensi.")
 
-    # 4. Sistem Pendukung Keputusan - Rekomendasi Kebijakan
-    st.subheader("💡 4. Sistem Pendukung Keputusan: Rekomendasi Kebijakan")
+    # 4. Analisis Komparatif & Benchmarking
+    st.subheader("📊 4. Analisis Komparatif & Benchmarking")
+    
+    # Perbandingan region
+    region_comparison = (
+        df_features.groupby("WHO Region")
+        .agg({
+            "Count_median": ["sum", "mean", "std"],
+            "Country": "nunique"
+        })
+        .round(2)
+    )
+    region_comparison.columns = ["Total Kasus", "Rata-rata Kasus", "Std Dev", "Jumlah Negara"]
+    region_comparison = region_comparison.sort_values("Total Kasus", ascending=False)
+    region_comparison["Total Kasus Formatted"] = region_comparison["Total Kasus"].apply(format_large)
+    region_comparison["% dari Global"] = (region_comparison["Total Kasus"] / total_cases_global * 100).round(2)
+    
+    col_comp1, col_comp2 = st.columns(2)
+    
+    with col_comp1:
+        st.markdown("**📈 Perbandingan WHO Region**")
+        region_display = region_comparison[["Total Kasus Formatted", "% dari Global", "Jumlah Negara", "Rata-rata Kasus"]].copy()
+        region_display.columns = ["Total Kasus", "% Global", "Jml Negara", "Rata-rata"]
+        region_display["Rata-rata"] = region_display["Rata-rata"].apply(format_large)
+        st.dataframe(region_display, use_container_width=True)
+    
+    with col_comp2:
+        st.markdown("**📊 Distribusi Kasus per Region**")
+        if PLOTLY_AVAILABLE:
+            fig_region_pie = px.pie(
+                region_comparison.reset_index(),
+                values="Total Kasus",
+                names="WHO Region",
+                title="Proporsi Kasus HIV per WHO Region",
+                hole=0.4
+            )
+            st.plotly_chart(fig_region_pie, use_container_width=True)
+        else:
+            fig, ax = plt.subplots()
+            ax.pie(region_comparison["Total Kasus"], labels=region_comparison.index, autopct='%1.1f%%')
+            ax.set_title("Proporsi Kasus HIV per WHO Region")
+            st.pyplot(fig)
+    
+    # 5. Key Performance Indicators (KPIs) & Risk Assessment
+    st.subheader("📊 5. Key Performance Indicators (KPIs) & Risk Assessment")
+    
+    # Hitung KPIs
+    top_3_countries_total = top_countries.head(3)["Count_median"].sum()
+    top_3_percentage = (top_3_countries_total / total_cases_global * 100).round(1)
+    top_5_countries_total = top_countries.head(5)["Count_median"].sum()
+    top_5_percentage = (top_5_countries_total / total_cases_global * 100).round(1)
+    
+    # Risk Score Calculation
+    high_risk_count = len(high_risk) if len(high_risk) > 0 else 0
+    moderate_risk_count = len(moderate_risk) if len(moderate_risk) > 0 else 0
+    
+    # Overall Risk Level
+    if high_risk_count >= 5:
+        overall_risk = "SANGAT TINGGI"
+        risk_color = "🔴"
+    elif high_risk_count >= 2:
+        overall_risk = "TINGGI"
+        risk_color = "🟠"
+    elif high_risk_count >= 1 or moderate_risk_count >= 5:
+        overall_risk = "SEDANG"
+        risk_color = "🟡"
+    else:
+        overall_risk = "RENDAH"
+        risk_color = "🟢"
+    
+    col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+    
+    with col_kpi1:
+        st.metric("🎯 Konsentrasi Top 3", f"{top_3_percentage}%", 
+                 help="Persentase kasus dari 3 negara teratas")
+    with col_kpi2:
+        st.metric("🎯 Konsentrasi Top 5", f"{top_5_percentage}%",
+                 help="Persentase kasus dari 5 negara teratas")
+    with col_kpi3:
+        st.metric("⚠️ Negara Risiko Tinggi", f"{high_risk_count}",
+                 help="Jumlah negara dengan pertumbuhan >20%")
+    with col_kpi4:
+        st.metric(f"{risk_color} Overall Risk Level", overall_risk,
+                 help="Tingkat risiko keseluruhan berdasarkan analisis data")
+    
+    # Risk Assessment Matrix
+    st.markdown("**📊 Risk Assessment Matrix**")
+    
+    if country_growth:
+        # Buat df_growth untuk Risk Matrix (gunakan yang sudah ada atau buat baru)
+        df_risk_matrix = pd.DataFrame(country_growth)
+        country_totals = df_features.groupby("Country")["Count_median"].sum().to_dict()
+        df_risk_matrix["Total_Cases"] = df_risk_matrix["Country"].map(country_totals)
+        
+        # Normalize untuk matrix
+        max_cases = df_risk_matrix["Total_Cases"].max()
+        max_growth = df_risk_matrix["Growth_Rate"].abs().max()
+        
+        if max_cases > 0 and max_growth > 0:
+            df_risk_matrix["Impact_Normalized"] = (df_risk_matrix["Total_Cases"] / max_cases * 100).round(1)
+            df_risk_matrix["Growth_Normalized"] = (df_risk_matrix["Growth_Rate"].abs() / max_growth * 100).round(1)
+        
+        # Visualisasi Risk Matrix
+        if max_cases > 0 and max_growth > 0:
+            if PLOTLY_AVAILABLE:
+                fig_risk = px.scatter(
+                    df_risk_matrix.head(20),  # Top 20 untuk readability
+                    x="Impact_Normalized",
+                    y="Growth_Normalized",
+                    size="Total_Cases",
+                    color="Growth_Rate",
+                    hover_name="Country",
+                    hover_data={
+                        "Total_Cases": ":,.0f",
+                        "Growth_Rate": ":.1f",
+                        "Impact_Normalized": ":.1f",
+                        "Growth_Normalized": ":.1f"
+                    },
+                    labels={
+                        "Impact_Normalized": "Impact Score (Berdasarkan Total Kasus)",
+                        "Growth_Normalized": "Growth Risk Score (Berdasarkan Tingkat Pertumbuhan)",
+                        "Growth_Rate": "Growth Rate (%)"
+                    },
+                    title="Risk Assessment Matrix: Impact vs Growth Risk",
+                    color_continuous_scale="RdYlGn_r"
+                )
+                fig_risk.update_layout(
+                    xaxis_title="Impact Score (Semakin tinggi = lebih banyak kasus)",
+                    yaxis_title="Growth Risk Score (Semakin tinggi = pertumbuhan lebih cepat)"
+                )
+                st.plotly_chart(fig_risk, use_container_width=True)
+                st.caption("**Interpretasi:** Posisi di kanan atas = risiko tertinggi (banyak kasus + pertumbuhan cepat). Posisi di kiri bawah = risiko lebih rendah.")
+            else:
+                fig, ax = plt.subplots(figsize=(10, 6))
+                scatter = ax.scatter(
+                    df_risk_matrix.head(20)["Impact_Normalized"],
+                    df_risk_matrix.head(20)["Growth_Normalized"],
+                    s=df_risk_matrix.head(20)["Total_Cases"] / 1000,
+                    c=df_risk_matrix.head(20)["Growth_Rate"],
+                    cmap="RdYlGn_r",
+                    alpha=0.6
+                )
+                ax.set_xlabel("Impact Score (Berdasarkan Total Kasus)")
+                ax.set_ylabel("Growth Risk Score (Berdasarkan Tingkat Pertumbuhan)")
+                ax.set_title("Risk Assessment Matrix: Impact vs Growth Risk")
+                plt.colorbar(scatter, ax=ax, label="Growth Rate (%)")
+                st.pyplot(fig)
+        else:
+            st.info("Data tidak cukup untuk membuat Risk Assessment Matrix")
+    
+    st.markdown("---")
+    
+    # 6. Sistem Pendukung Keputusan - Rekomendasi Kebijakan
+    st.subheader("💡 6. Sistem Pendukung Keputusan: Rekomendasi Kebijakan")
     
     # Generate rekomendasi berdasarkan analisis
     recommendations = []
@@ -751,11 +1018,22 @@ def main():
     for idx, row in top_countries.head(5).iterrows():
         country = row["Country"]
         cases = row["Count_median"]
+        # Cek apakah negara ini juga high growth
+        is_high_growth = False
+        if country_growth:
+            country_growth_df = pd.DataFrame(country_growth)
+            country_info = country_growth_df[country_growth_df["Country"] == country]
+            if len(country_info) > 0 and country_info.iloc[0]["Growth_Rate"] > 20:
+                is_high_growth = True
+        
+        priority = "SANGAT TINGGI" if is_high_growth else "TINGGI"
         recommendations.append({
-            "Prioritas": "SANGAT TINGGI",
+            "Prioritas": priority,
             "Target": f"Negara: {country}",
-            "Alasan": f"Total kasus {format_large(cases)} - termasuk 5 negara dengan beban tertinggi",
-            "Rekomendasi": f"1. Intensifikasi program pencegahan dan pengobatan di {country}\n2. Alokasi sumber daya prioritas untuk testing dan treatment\n3. Program edukasi dan awareness yang lebih agresif"
+            "Alasan": f"Total kasus {format_large(cases)} - termasuk 5 negara dengan beban tertinggi" + (f" dengan pertumbuhan sangat cepat" if is_high_growth else ""),
+            "Rekomendasi": f"1. **Intensifikasi Program Pencegahan**: Perluas cakupan program pencegahan dan pengobatan di {country}\n2. **Alokasi Sumber Daya Prioritas**: Fokuskan anggaran untuk testing, treatment, dan care services\n3. **Program Edukasi & Awareness**: Kampanye edukasi yang lebih agresif dan terukur\n4. **Monitoring & Evaluasi**: Sistem tracking real-time untuk deteksi dini peningkatan kasus\n5. **Kolaborasi Internasional**: Kerjasama dengan organisasi internasional untuk best practices",
+            "Timeline": "Segera (0-3 bulan)",
+            "Budget_Estimate": "Tinggi"
         })
     
     # Rekomendasi untuk high growth countries
@@ -763,92 +1041,338 @@ def main():
         for idx, row in high_risk.head(3).iterrows():
             country = row["Country"]
             growth = row["Growth_Rate"]
+            current = row["Current_Cases"]
             recommendations.append({
-                "Prioritas": "TINGGI",
+                "Prioritas": "SANGAT TINGGI",
                 "Target": f"Negara: {country}",
-                "Alasan": f"Pertumbuhan {growth:.1f}% - pertumbuhan sangat cepat",
-                "Rekomendasi": f"1. Investigasi penyebab peningkatan kasus di {country}\n2. Implementasi program pencegahan darurat\n3. Monitoring dan evaluasi intensif"
+                "Alasan": f"Pertumbuhan {growth:.1f}% - pertumbuhan sangat cepat dengan {format_large(current)} kasus terkini",
+                "Rekomendasi": f"1. **Investigasi Mendalam**: Analisis penyebab peningkatan kasus di {country}\n2. **Program Pencegahan Darurat**: Implementasi intervensi cepat dan terukur\n3. **Monitoring Intensif**: Tracking harian/mingguan untuk deteksi tren\n4. **Rapid Response Team**: Tim khusus untuk penanganan darurat\n5. **Resource Mobilization**: Mobilisasi sumber daya tambahan dari donor internasional",
+                "Timeline": "Sangat Segera (0-1 bulan)",
+                "Budget_Estimate": "Sangat Tinggi"
             })
     
     # Rekomendasi untuk top regions
     for idx, row in top_regions.head(3).iterrows():
         region = row["WHO Region"]
         pct = row["Persentase"]
+        total_region = row["Count_median"]
         recommendations.append({
             "Prioritas": "TINGGI",
             "Target": f"Region: {region}",
-            "Alasan": f"Mencakup {pct}% dari total kasus global",
-            "Rekomendasi": f"1. Koordinasi regional untuk program pencegahan di {region}\n2. Sharing best practices antar negara dalam region\n3. Alokasi dana regional untuk intervensi terpadu"
+            "Alasan": f"Mencakup {pct}% dari total kasus global ({format_large(total_region)} kasus)",
+            "Rekomendasi": f"1. **Koordinasi Regional**: Platform koordinasi untuk program pencegahan di {region}\n2. **Sharing Best Practices**: Pertukaran pengalaman antar negara dalam region\n3. **Alokasi Dana Regional**: Pooling resources untuk intervensi terpadu\n4. **Capacity Building**: Pelatihan dan penguatan kapasitas negara-negara dalam region\n5. **Regional Strategy**: Strategi regional yang terintegrasi dan terukur",
+            "Timeline": "Jangka Menengah (3-6 bulan)",
+            "Budget_Estimate": "Sangat Tinggi"
         })
+    
+    # Rekomendasi untuk declining countries (best practices)
+    if len(declining) > 0:
+        for idx, row in declining.head(2).iterrows():
+            country = row["Country"]
+            growth = row["Growth_Rate"]
+            recommendations.append({
+                "Prioritas": "INFORMASI",
+                "Target": f"Negara: {country} (Best Practice)",
+                "Alasan": f"Tren menurun {growth:.1f}% - sukses dalam penanganan HIV/AIDS",
+                "Rekomendasi": f"1. **Dokumentasi Best Practices**: Dokumentasi program yang berhasil di {country}\n2. **Knowledge Sharing**: Sharing pengalaman ke negara lain\n3. **Sustaining Success**: Mempertahankan momentum penurunan kasus\n4. **Replication**: Replikasi program ke negara dengan karakteristik serupa",
+                "Timeline": "Berkelanjutan",
+                "Budget_Estimate": "Sedang"
+            })
 
     if recommendations:
-        st.markdown("**Rekomendasi Kebijakan Berbasis Data:**")
+        st.markdown("**🎯 Rekomendasi Kebijakan Berbasis Data (Diurutkan berdasarkan Prioritas):**")
         
-        for i, rec in enumerate(recommendations[:8], 1):  # Tampilkan max 8 rekomendasi
-            with st.expander(f"**Rekomendasi #{i} - Prioritas: {rec['Prioritas']}** | Target: {rec['Target']}", expanded=(i <= 3)):
-                st.markdown(f"**Alasan:** {rec['Alasan']}")
-                st.markdown(f"**Rekomendasi Kebijakan:**")
+        # Filter berdasarkan prioritas
+        priority_filter = st.multiselect(
+            "Filter berdasarkan Prioritas:",
+            options=["SANGAT TINGGI", "TINGGI", "INFORMASI"],
+            default=["SANGAT TINGGI", "TINGGI"]
+        )
+        
+        filtered_recs = [r for r in recommendations if r["Prioritas"] in priority_filter]
+        
+        for i, rec in enumerate(filtered_recs[:10], 1):  # Tampilkan max 10 rekomendasi
+            priority_color = {
+                "SANGAT TINGGI": "🔴",
+                "TINGGI": "🟡",
+                "INFORMASI": "🟢"
+            }.get(rec["Prioritas"], "⚪")
+            
+            with st.expander(f"**{priority_color} Rekomendasi #{i} - Prioritas: {rec['Prioritas']}** | Target: {rec['Target']}", expanded=(i <= 2)):
+                col_rec1, col_rec2 = st.columns(2)
+                with col_rec1:
+                    st.markdown(f"**📋 Alasan:** {rec['Alasan']}")
+                    st.markdown(f"**⏰ Timeline:** {rec['Timeline']}")
+                with col_rec2:
+                    st.markdown(f"**💰 Estimasi Budget:** {rec['Budget_Estimate']}")
+                
+                st.markdown("**💡 Rekomendasi Kebijakan:**")
                 st.markdown(rec['Rekomendasi'])
 
-    # 5. Actionable Insights & Next Steps
-    st.subheader("🚀 5. Actionable Insights & Langkah Selanjutnya")
+    # 7. Analisis Prediktif Sederhana & Proyeksi
+    st.subheader("🔮 7. Analisis Prediktif & Proyeksi")
+    
+    # Hitung CAGR (Compound Annual Growth Rate)
+    if len(year_trend_analysis) > 1:
+        years_diff = year_trend_analysis.iloc[-1]["Year"] - year_trend_analysis.iloc[0]["Year"]
+        if years_diff > 0 and first_year_cases > 0:
+            cagr = (((last_year_cases / first_year_cases) ** (1 / years_diff)) - 1) * 100
+        else:
+            cagr = 0
+    else:
+        cagr = 0
+    
+    # Proyeksi sederhana untuk 3 tahun ke depan (jika tren linear)
+    if len(year_trend_analysis) > 1:
+        # Hitung rata-rata pertumbuhan per tahun
+        year_trend_analysis["Year_Diff"] = year_trend_analysis["Year"].diff()
+        year_trend_analysis["Case_Diff"] = year_trend_analysis["Count_median"].diff()
+        year_trend_analysis["Yearly_Growth"] = year_trend_analysis["Case_Diff"] / year_trend_analysis["Year_Diff"]
+        avg_yearly_growth = year_trend_analysis["Yearly_Growth"].mean()
+        
+        # Proyeksi 3 tahun ke depan
+        last_year = int(year_trend_analysis.iloc[-1]["Year"])
+        projection_years = [last_year + 1, last_year + 2, last_year + 3]
+        projections = []
+        current_cases = last_year_cases
+        
+        for proj_year in projection_years:
+            current_cases += avg_yearly_growth
+            projections.append({
+                "Tahun": proj_year,
+                "Proyeksi Kasus": max(0, current_cases),
+                "Pertumbuhan": avg_yearly_growth
+            })
+        
+        df_projection = pd.DataFrame(projections)
+        df_projection["Proyeksi Kasus Formatted"] = df_projection["Proyeksi Kasus"].apply(format_large)
+    else:
+        df_projection = pd.DataFrame()
+        avg_yearly_growth = 0
+    
+    col_proj1, col_proj2 = st.columns(2)
+    
+    with col_proj1:
+        st.markdown("**📊 Metrik Pertumbuhan:**")
+        st.metric("CAGR (Compound Annual Growth Rate)", f"{cagr:+.2f}%")
+        st.metric("Rata-rata Pertumbuhan per Tahun", format_large(avg_yearly_growth))
+        st.metric("Kasus Tahun Terakhir", format_large(last_year_cases))
+    
+    with col_proj2:
+        st.markdown("**🔮 Proyeksi 3 Tahun Ke Depan:**")
+        if len(df_projection) > 0:
+            proj_display = df_projection[["Tahun", "Proyeksi Kasus Formatted"]].copy()
+            proj_display.columns = ["Tahun", "Proyeksi Total Kasus"]
+            st.dataframe(proj_display, use_container_width=True, hide_index=True)
+            st.caption("**Catatan:** Proyeksi berdasarkan tren linear dari data historis. Aktual dapat berbeda tergantung intervensi.")
+        else:
+            st.info("Data tidak cukup untuk proyeksi")
+    
+    # Visualisasi proyeksi
+    if len(df_projection) > 0 and PLOTLY_AVAILABLE:
+        # Gabungkan data historis dengan proyeksi
+        historical_data = year_trend_analysis[["Year", "Count_median"]].copy()
+        historical_data["Type"] = "Historis"
+        
+        projection_data = df_projection[["Tahun", "Proyeksi Kasus"]].copy()
+        projection_data.columns = ["Year", "Count_median"]
+        projection_data["Type"] = "Proyeksi"
+        
+        combined_data = pd.concat([historical_data, projection_data], ignore_index=True)
+        
+        fig_projection = px.line(
+            combined_data,
+            x="Year",
+            y="Count_median",
+            color="Type",
+            markers=True,
+            labels={
+                "Year": "Tahun",
+                "Count_median": "Total Kasus HIV",
+                "Type": "Tipe Data"
+            },
+            title="Tren Historis & Proyeksi Kasus HIV (3 Tahun Ke Depan)"
+        )
+        fig_projection.update_traces(line=dict(dash="dash"), selector={"name": "Proyeksi"})
+        st.plotly_chart(fig_projection, use_container_width=True)
+    
+    # 8. Actionable Insights & Next Steps
+    st.subheader("🚀 8. Actionable Insights & Langkah Selanjutnya")
+    
+    # Hitung statistik tambahan untuk insights
+    top_3_countries_total = top_countries.head(3)["Count_median"].sum()
+    top_3_percentage = (top_3_countries_total / total_cases_global * 100).round(1)
     
     insights_col1, insights_col2 = st.columns(2)
     
     with insights_col1:
         st.markdown("**📌 Insight Kunci:**")
-        st.markdown("""
-        - **Fokus Geografis**: {} region menyumbang sebagian besar kasus global
-        - **Tren Global**: Pertumbuhan kasus {} dari {} ke {}
-        - **Prioritas Intervensi**: {} negara memerlukan perhatian segera
-        """.format(
-            len(top_regions),
-            "meningkat" if growth_rate > 0 else "menurun",
-            int(df_features['Year'].min()),
-            int(df_features['Year'].max()),
-            len(high_risk) if len(high_risk) > 0 else 0
-        ))
+        st.markdown(f"""
+        - **Fokus Geografis**: {len(top_regions)} region menyumbang sebagian besar kasus global
+        - **Konsentrasi Kasus**: Top 3 negara menyumbang {top_3_percentage}% dari total kasus global
+        - **Tren Global**: Pertumbuhan kasus **{"meningkat" if growth_rate > 0 else "menurun"}** sebesar {abs(growth_rate):.1f}% dari {int(df_features['Year'].min())} ke {int(df_features['Year'].max())}
+        - **Prioritas Intervensi**: {len(high_risk) if len(high_risk) > 0 else 0} negara dengan pertumbuhan >20% memerlukan perhatian segera
+        - **CAGR**: {cagr:+.2f}% per tahun menunjukkan tren {"naik" if cagr > 0 else "turun"} yang {"mengkhawatirkan" if cagr > 5 else "stabil"}
+        """)
     
     with insights_col2:
-        st.markdown("**✅ Langkah Selanjutnya:**")
+        st.markdown("**✅ Langkah Selanjutnya (Action Plan):**")
         st.markdown("""
-        1. **Monitoring Berkelanjutan**: Tracking kasus per kuartal untuk deteksi dini
-        2. **Evaluasi Program**: Review efektivitas program pencegahan di area prioritas
-        3. **Alokasi Sumber Daya**: Fokuskan anggaran ke negara/region dengan beban tertinggi
-        4. **Kolaborasi Internasional**: Koordinasi antar negara untuk best practices
-        5. **Data-Driven Decision**: Gunakan dashboard ini untuk evaluasi berkala
+        **Fase 1 - Immediate (0-1 bulan):**
+        1. ✅ **Emergency Response**: Aktivasi rapid response untuk negara risiko tinggi
+        2. ✅ **Resource Mobilization**: Mobilisasi sumber daya untuk area prioritas
+        
+        **Fase 2 - Short Term (1-3 bulan):**
+        3. ✅ **Program Intensifikasi**: Implementasi program pencegahan di top 10 negara
+        4. ✅ **Monitoring System**: Setup sistem monitoring real-time
+        5. ✅ **Stakeholder Engagement**: Koordinasi dengan pemerintah dan organisasi internasional
+        
+        **Fase 3 - Medium Term (3-6 bulan):**
+        6. ✅ **Regional Coordination**: Platform koordinasi regional untuk top 3 region
+        7. ✅ **Capacity Building**: Pelatihan dan penguatan kapasitas
+        8. ✅ **Best Practice Replication**: Replikasi program sukses ke negara lain
+        
+        **Fase 4 - Long Term (6-12 bulan):**
+        9. ✅ **Evaluation & Optimization**: Evaluasi program dan optimasi berdasarkan hasil
+        10. ✅ **Sustainability Planning**: Perencanaan keberlanjutan program
         """)
 
-    # 6. Download Laporan
-    st.subheader("📥 6. Ekspor Laporan")
+    # 9. Ekspor Laporan & Dokumentasi
+    st.subheader("📥 9. Ekspor Laporan & Dokumentasi")
     
-    # Buat summary report
+    # Buat laporan lengkap
+    report_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    # Siapkan data untuk laporan
+    top_5_countries_str = "\n".join([
+        f"  {i+1}. {row['Country']}: {format_large(row['Count_median'])} kasus" 
+        for i, (_, row) in enumerate(top_countries.head(5).iterrows())
+    ])
+    
+    top_3_regions_str = "\n".join([
+        f"  {i+1}. {row['WHO Region']}: {format_large(row['Count_median'])} kasus ({row['Persentase']}%)" 
+        for i, (_, row) in enumerate(top_regions.head(3).iterrows())
+    ])
+    
+    recommendations_str = "\n".join([
+        f"\n{i+1}. {rec['Prioritas']} - {rec['Target']}\n   Alasan: {rec['Alasan']}\n   Timeline: {rec['Timeline']}\n   Rekomendasi:\n   {rec['Rekomendasi'].replace(chr(10), chr(10) + '   ')}"
+        for i, rec in enumerate(recommendations[:8], 1)
+    ])
+    
+    high_risk_str = ""
+    if len(high_risk) > 0:
+        high_risk_str = "\n".join([
+            f"  - {row['Country']}: Pertumbuhan {row['Growth_Rate']:.1f}%, Kasus {format_large(row['Current_Cases'])}"
+            for _, row in high_risk.iterrows()
+        ])
+    else:
+        high_risk_str = "  - Tidak ada negara dengan pertumbuhan >20%"
+    
     report_summary = f"""
-# LAPORAN ANALITIK HIV/AIDS - DECISION SUPPORT SYSTEM
-## Tanggal: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+================================================================================
+LAPORAN ANALITIK HIV/AIDS - DECISION SUPPORT SYSTEM
+Sistem Pendukung Keputusan untuk Rekomendasi Kebijakan Pencegahan HIV/AIDS
+================================================================================
+Tanggal Laporan: {report_date}
+Periode Data: {int(df_features['Year'].min())} - {int(df_features['Year'].max())}
+================================================================================
 
-### RINGKASAN EKSEKUTIF
-- Total Kasus Global: {format_large(total_cases_global)}
-- Rata-rata Kasus per Tahun: {format_large(avg_cases_per_year)}
-- Tingkat Pertumbuhan: {growth_rate:+.1f}%
-- Rentang Tahun: {int(df_features['Year'].min())}-{int(df_features['Year'].max())}
+1. RINGKASAN EKSEKUTIF
+--------------------------------------------------------------------------------
+Total Kasus Global: {format_large(total_cases_global)}
+Rata-rata Kasus per Tahun: {format_large(avg_cases_per_year)}
+Tingkat Pertumbuhan: {growth_rate:+.1f}%
+CAGR (Compound Annual Growth Rate): {cagr:+.2f}%
+Rentang Tahun: {int(df_features['Year'].min())} - {int(df_features['Year'].max())}
+Jumlah Negara: {df_features['Country'].nunique()}
+Jumlah WHO Region: {df_features['WHO Region'].nunique()}
 
-### TOP 5 NEGARA PRIORITAS
-{chr(10).join([f"{i+1}. {row['Country']}: {format_large(row['Count_median'])} kasus" for i, (_, row) in enumerate(top_countries.head(5).iterrows())])}
+2. IDENTIFIKASI AREA PRIORITAS
+--------------------------------------------------------------------------------
+TOP 5 NEGARA DENGAN KASUS TERTINGGI:
+{top_5_countries_str}
 
-### TOP 3 REGION PRIORITAS
-{chr(10).join([f"{i+1}. {row['WHO Region']}: {format_large(row['Count_median'])} kasus ({row['Persentase']}%)" for i, (_, row) in enumerate(top_regions.head(3).iterrows())])}
+TOP 3 WHO REGION DENGAN KASUS TERTINGGI:
+{top_3_regions_str}
 
-### REKOMENDASI KEBIJAKAN
-{chr(10).join([f"{i+1}. {rec['Target']}: {rec['Alasan']}" for i, rec in enumerate(recommendations[:5], 1)])}
+3. ANALISIS RISIKO
+--------------------------------------------------------------------------------
+NEGARA DENGAN RISIKO TINGGI (Pertumbuhan >20%):
+{high_risk_str}
+
+4. REKOMENDASI KEBIJAKAN
+--------------------------------------------------------------------------------
+{recommendations_str}
+
+5. PROYEKSI & TREN
+--------------------------------------------------------------------------------
+Proyeksi 3 Tahun Ke Depan (berdasarkan tren linear):
 """
     
-    st.download_button(
-        label="📄 Download Laporan Ringkas (TXT)",
-        data=report_summary,
-        file_name=f"HIV_AIDS_Decision_Support_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-        mime="text/plain"
-    )
+    if len(df_projection) > 0:
+        for _, row in df_projection.iterrows():
+            report_summary += f"  - Tahun {int(row['Tahun'])}: {row['Proyeksi Kasus Formatted']} kasus\n"
+    else:
+        report_summary += "  - Data tidak cukup untuk proyeksi\n"
+    
+    report_summary += f"""
+6. ACTIONABLE INSIGHTS
+--------------------------------------------------------------------------------
+- Fokus Geografis: {len(top_regions)} region menyumbang sebagian besar kasus global
+- Konsentrasi Kasus: Top 3 negara menyumbang {top_3_percentage}% dari total kasus
+- Tren Global: Pertumbuhan kasus {"meningkat" if growth_rate > 0 else "menurun"} sebesar {abs(growth_rate):.1f}%
+- Prioritas Intervensi: {len(high_risk) if len(high_risk) > 0 else 0} negara memerlukan perhatian segera
+
+7. LANGKAH SELANJUTNYA
+--------------------------------------------------------------------------------
+Fase 1 - Immediate (0-1 bulan):
+  - Emergency Response untuk negara risiko tinggi
+  - Resource Mobilization untuk area prioritas
+
+Fase 2 - Short Term (1-3 bulan):
+  - Intensifikasi program pencegahan di top 10 negara
+  - Setup sistem monitoring real-time
+  - Koordinasi dengan stakeholders
+
+Fase 3 - Medium Term (3-6 bulan):
+  - Platform koordinasi regional
+  - Capacity building dan pelatihan
+  - Replikasi best practices
+
+Fase 4 - Long Term (6-12 bulan):
+  - Evaluasi dan optimasi program
+  - Perencanaan keberlanjutan
+
+================================================================================
+Laporan ini dihasilkan secara otomatis oleh Decision Support System
+untuk mendukung pengambilan keputusan berbasis data.
+================================================================================
+"""
+    
+    col_export1, col_export2 = st.columns(2)
+    
+    with col_export1:
+        st.download_button(
+            label="📄 Download Laporan Lengkap (TXT)",
+            data=report_summary,
+            file_name=f"HIV_AIDS_Decision_Support_Report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+            mime="text/plain"
+        )
+    
+    with col_export2:
+        # Ekspor data prioritas ke CSV
+        if len(top_countries) > 0:
+            priority_data = top_countries.head(10)[["Country", "Count_median"]].copy()
+            priority_data.columns = ["Country", "Total_Cases"]
+            csv_data = priority_data.to_csv(index=False)
+            st.download_button(
+                label="📊 Download Data Prioritas (CSV)",
+                data=csv_data,
+                file_name=f"HIV_Priority_Countries_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+    
+    st.info("💡 **Tip**: Gunakan laporan ini untuk presentasi kepada stakeholders, perencanaan anggaran, dan dokumentasi keputusan kebijakan.")
 
     st.markdown(
         "**Catatan:** Dashboard ini diringkas dari notebook `Progress_Split_Analysis.ipynb` "
